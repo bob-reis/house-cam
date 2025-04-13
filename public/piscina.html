@@ -57,14 +57,6 @@
     <button onclick="ativarCamera()">Câmera da Casa</button>
     <br />
     <center><img id="imagem-casa" src="casa.jpg" alt="Imagem da casa" /></center>
-    <script>
-      const ultimaFoto = localStorage.getItem("ultimaFoto");
-      if (ultimaFoto) {
-        document.getElementById("imagem-casa").src = ultimaFoto;
-      } else {
-        document.getElementById("imagem-casa").alt = "Nenhuma imagem capturada ainda.";
-      }
-    </script>
 
     <script>
       async function ativarCamera() {
